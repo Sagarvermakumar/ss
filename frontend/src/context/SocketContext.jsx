@@ -6,7 +6,7 @@ const SocketContext = createContext(null)
 export const useSocket = () => useContext(SocketContext)
 
 export function SocketProvider({ children }) {
-  const serverUrl = import.meta.env.VITE_SERVER_URL || "https://fbe3adfbbb8c.ngrok-free.app/" || 'http://localhost:4000'
+  const serverUrl =  'http://localhost:4000'
   const defaultRoomId = import.meta.env.VITE_DEFAULT_ROOM_ID || 'family-room-1'
 
   const socketRef = useRef(null)
