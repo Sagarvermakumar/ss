@@ -15,48 +15,66 @@ export default function ChildPage() {
     }
   }, [localStreamRef.current])
 
-  async function startShare() {
-    try {
+async function startShare() {
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+    if (!stream) return alert('Could not get display media')
+    localStreamRef.current = stream
+    if (videoRef.current) videoRef.current.srcObject = stream
 
+    const peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
+    setPc(peer)
 
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
-      if (!stream) return alert('Could not get display media')
-      localStreamRef.current = stream
-      if (videoRef.current) videoRef.current.srcObject = stream
+    stream.getTracks().forEach((track) => peer.addTrack(track, stream))
 
-      const peer = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] })
-      setPc(peer)
-
-      stream.getTracks().forEach((track) => peer.addTrack(track, stream))
-
-      peer.onicecandidate = (e) => {
-        if (e.candidate) {
+    peer.onicecandidate = (e) => {
+      if (e.candidate) {
+        try {
           socket?.emit('candidate', { roomId, candidate: e.candidate })
+        } catch (err) {
+          console.error('Error sending ICE candidate:', err)
+          alert('Error sending ICE candidate: ' + err.message)
         }
       }
-
-      const offer = await peer.createOffer()
-      await peer.setLocalDescription(offer)
-      // Broadcast to room admins; backend will mark this child active
-      socket?.emit('offer', { roomId, sdp: offer })
-
-      socket?.once('answer', async ({ sdp }) => {
-        await peer.setRemoteDescription(new RTCSessionDescription(sdp))
-      })
-
-      socket?.on('candidate', async ({ candidate }) => {
-        try {
-          await peer.addIceCandidate(new RTCIceCandidate(candidate))
-        } catch {}
-      })
-
-      stream.getVideoTracks()[0]?.addEventListener('ended', () => stopShare())
-
-      setSharing(true)
-    } catch (err) {
-      console.error(err)
     }
+
+    const offer = await peer.createOffer()
+    await peer.setLocalDescription(offer)
+
+    try {
+      socket?.emit('offer', { roomId, sdp: offer })
+    } catch (err) {
+      console.error('Error sending offer:', err)
+      alert('Error sending offer: ' + err.message)
+    }
+
+    socket?.once('answer', async ({ sdp }) => {
+      try {
+        await peer.setRemoteDescription(new RTCSessionDescription(sdp))
+      } catch (err) {
+        console.error('Error setting remote description:', err)
+        alert('Error setting remote description: ' + err.message)
+      }
+    })
+
+    socket?.on('candidate', async ({ candidate }) => {
+      try {
+        await peer.addIceCandidate(new RTCIceCandidate(candidate))
+      } catch (err) {
+        console.error('Error adding ICE candidate:', err)
+        alert('Error adding ICE candidate: ' + err.message)
+      }
+    })
+
+    stream.getVideoTracks()[0]?.addEventListener('ended', () => stopShare())
+
+    setSharing(true)
+  } catch (err) {
+    console.error('Error starting screen share:', err)
+    alert('Could not start screen sharing: ' + err.message)
   }
+}
+
 
   function stopShare() {
     localStreamRef.current?.getTracks().forEach((t) => t.stop())
@@ -77,18 +95,35 @@ export default function ChildPage() {
     return () => window.removeEventListener('beforeunload', beforeUnload)
   }, [pc])
 
-  useEffect(() => {
-    if (!socket) return
-    const handleRequestOffer = async ({ to, roomId: rid }) => {
+useEffect(() => {
+  if (!socket) return
+
+  const handleRequestOffer = async ({ to, roomId: rid }) => {
+    try {
       if (!sharing || !pc) return
+
       // Create a fresh offer for the requesting admin
       const offer = await pc.createOffer()
       await pc.setLocalDescription(offer)
-      socket.emit('offer', { roomId: rid || roomId, sdp: offer, to })
+
+      try {
+        socket.emit('offer', { roomId: rid || roomId, sdp: offer, to })
+      } catch (err) {
+        console.error('Error sending offer via socket:', err)
+        alert('Error sending offer: ' + err.message)
+      }
+
+    } catch (err) {
+      console.error('Error creating or setting offer:', err)
+      alert('Error handling request-offer: ' + err.message)
     }
-    socket.on('request-offer', handleRequestOffer)
-    return () => socket.off('request-offer', handleRequestOffer)
-  }, [socket, pc, sharing, roomId])
+  }
+
+  socket.on('request-offer', handleRequestOffer)
+
+  return () => socket.off('request-offer', handleRequestOffer)
+}, [socket, pc, sharing, roomId])
+
 
   return (
     <Box>
